@@ -1,0 +1,162 @@
+{
+  "name": "studiolink-roblox",
+  "displayName": "StudioLink Roblox",
+  "description": "Roblox project bridge, daemon status, script deploy, and coding assistance for the StudioLink editor fork.",
+  "version": "0.0.1",
+  "publisher": "studiolink",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.108.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "gulp compile-extension:studiolink-roblox",
+    "watch": "gulp watch-extension:studiolink-roblox"
+  },
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:studiolink.projects",
+    "onCommand:studiolink.refresh",
+    "onCommand:studiolink.checkDaemon",
+    "onCommand:studiolink.openProject",
+    "onCommand:studiolink.applyActiveScript",
+    "onLanguage:luau",
+    "onLanguage:lua"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": false,
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "StudioLink needs local filesystem and localhost daemon access."
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "studiolink",
+          "title": "StudioLink",
+          "icon": "resources/studiolink.svg"
+        }
+      ]
+    },
+    "views": {
+      "studiolink": [
+        {
+          "id": "studiolink.projects",
+          "name": "Roblox Projects",
+          "contextualTitle": "StudioLink",
+          "icon": "$(symbol-namespace)"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "studiolink.refresh",
+        "title": "Refresh StudioLink Projects",
+        "category": "StudioLink",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "studiolink.checkDaemon",
+        "title": "Check StudioLink Daemon",
+        "category": "StudioLink",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "studiolink.openProject",
+        "title": "Open Roblox Project",
+        "category": "StudioLink",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "studiolink.applyActiveScript",
+        "title": "Apply Active Script to Roblox Studio",
+        "category": "StudioLink",
+        "icon": "$(cloud-upload)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "studiolink.refresh",
+          "when": "view == studiolink.projects",
+          "group": "navigation"
+        },
+        {
+          "command": "studiolink.checkDaemon",
+          "when": "view == studiolink.projects",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "studiolink.openProject",
+          "when": "view == studiolink.projects && viewItem == studiolink.project",
+          "group": "inline"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "studiolink.applyActiveScript",
+          "when": "resourceExtname =~ /\\.(lua|luau)$/",
+          "group": "navigation"
+        }
+      ]
+    },
+    "languages": [
+      {
+        "id": "luau",
+        "aliases": [
+          "Luau",
+          "luau"
+        ],
+        "extensions": [
+          ".luau"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "lua",
+        "aliases": [
+          "Lua",
+          "lua"
+        ],
+        "extensions": [
+          ".lua"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "configuration": {
+      "id": "studiolink",
+      "title": "StudioLink",
+      "type": "object",
+      "properties": {
+        "studiolink.daemonUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:45678",
+          "description": "Local StudioLink daemon base URL."
+        },
+        "studiolink.inlineSuggestions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable StudioLink Roblox-aware inline coding suggestions."
+        },
+        "studiolink.projectDataDir": {
+          "type": "string",
+          "default": "",
+          "description": "Override the StudioLink data directory. Empty uses the platform default."
+        }
+      }
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/olishoc/studiolink-vscode.git"
+  }
+}
