@@ -1,0 +1,23 @@
+{
+  "name": "studiolink-terminal-red-theme",
+  "displayName": "StudioLink Terminal Red",
+  "description": "Terminal-red technical theme for the StudioLink Roblox editor fork.",
+  "version": "0.0.1",
+  "publisher": "studiolink",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.108.0"
+  },
+  "categories": [
+    "Themes"
+  ],
+  "contributes": {
+    "themes": [
+      {
+        "label": "StudioLink Terminal Red",
+        "uiTheme": "vs-dark",
+        "path": "./themes/studiolink-terminal-red-color-theme.json"
+      }
+    ]
+  }
+}
