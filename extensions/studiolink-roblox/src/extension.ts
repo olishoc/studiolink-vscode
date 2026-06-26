@@ -18,6 +18,9 @@ interface ProjectSummary {
 	totalBytes: number;
 	updatedAt?: string;
 	placeName?: string;
+	gameId?: string;
+	jobId?: string;
+	active?: boolean;
 }
 
 interface ScriptRecord {
@@ -61,7 +64,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		daemonStatusItem,
 		vscode.commands.registerCommand('studiolink.refresh', () => projectProvider?.refresh()),
 		vscode.commands.registerCommand('studiolink.checkDaemon', () => checkDaemon(client, true)),
-		vscode.commands.registerCommand('studiolink.openProject', (node?: ProjectNode) => openProject(node)),
+		vscode.commands.registerCommand('studiolink.openProject', (node?: ProjectNode) => openProject(client, node)),
 		vscode.commands.registerCommand('studiolink.applyActiveScript', () => applyActiveScript(client)),
 		vscode.languages.registerInlineCompletionItemProvider([{ language: 'luau' }, { language: 'lua' }], new StudioLinkInlineProvider()),
 		vscode.workspace.onDidChangeConfiguration(event => {
@@ -99,8 +102,8 @@ async function checkDaemon(client: StudioLinkDaemonClient, showMessage: boolean)
 	}
 }
 
-async function openProject(node?: ProjectNode): Promise<void> {
-	const project = node?.project ?? await chooseProject();
+async function openProject(client: StudioLinkDaemonClient, node?: ProjectNode): Promise<void> {
+	const project = node?.project ?? await chooseProject(client);
 	if (!project) {
 		return;
 	}
@@ -108,8 +111,8 @@ async function openProject(node?: ProjectNode): Promise<void> {
 	await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(target), { forceNewWindow: false });
 }
 
-async function chooseProject(): Promise<ProjectSummary | undefined> {
-	const projects = await readProjects();
+async function chooseProject(client: StudioLinkDaemonClient): Promise<ProjectSummary | undefined> {
+	const projects = await readProjects(client);
 	const items = projects.map(project => ({
 		label: project.placeName || project.placeId,
 		description: `${project.scriptsCount} scripts`,
@@ -130,36 +133,37 @@ async function applyActiveScript(client: StudioLinkDaemonClient): Promise<void> 
 		void vscode.window.showWarningMessage('Active document is not a Lua/Luau script.');
 		return;
 	}
-	const project = await projectForDocument(document.uri);
+	const project = await projectForDocument(client, document.uri);
 	if (!project) {
 		void vscode.window.showWarningMessage('Could not match this file to a StudioLink Roblox project.');
 		return;
 	}
-	const scriptPath = await scriptPathForDocument(project, document.uri);
+	const scriptPath = await scriptPathForDocument(client, project, document.uri);
 	if (!scriptPath) {
 		void vscode.window.showWarningMessage('Could not map this file to a Roblox script path.');
 		return;
 	}
-	await client.rpc('script:write', project.placeId, {
+	await client.writeProjectScript(project.placeId, {
 		path: scriptPath,
 		source: document.getText(),
 		origin: 'studiolink-vscode',
+		pendingStudioDeploy: true,
 		summary: `Updated ${scriptPath} from StudioLink Code`
 	});
 	void vscode.window.showInformationMessage(`Applied ${scriptPath} to Roblox Studio.`);
 }
 
-async function projectForDocument(uri: vscode.Uri): Promise<ProjectSummary | undefined> {
+async function projectForDocument(client: StudioLinkDaemonClient, uri: vscode.Uri): Promise<ProjectSummary | undefined> {
 	if (uri.scheme !== 'file') {
 		return undefined;
 	}
 	const filePath = normalizePath(uri.fsPath);
-	const projects = await readProjects();
+	const projects = await readProjects(client);
 	return projects.find(project => filePath.startsWith(`${normalizePath(project.repoDir)}${path.sep}`) || filePath.startsWith(`${normalizePath(project.placeDir)}${path.sep}`));
 }
 
-async function scriptPathForDocument(project: ProjectSummary, uri: vscode.Uri): Promise<string | undefined> {
-	const records = await readScripts(project);
+async function scriptPathForDocument(client: StudioLinkDaemonClient, project: ProjectSummary, uri: vscode.Uri): Promise<string | undefined> {
+	const records = await readScripts(client, project);
 	const filePath = normalizePath(uri.fsPath);
 	const byFileName = records.find(record => {
 		const expected = normalizePath(path.join(project.repoDir, `${safeFileName(record.path)}.lua`));
@@ -202,6 +206,20 @@ class StudioLinkDaemonClient {
 		return response.payload;
 	}
 
+	async listProjects(): Promise<ProjectSummary[]> {
+		const response = await this.rpc('project:list', '__global__', {});
+		return Array.isArray(response.projects) ? response.projects.filter(isProjectSummary) : [];
+	}
+
+	async listProjectScripts(placeId: string, includeSource = false): Promise<ScriptRecord[]> {
+		const response = await this.rpc('project:scripts', placeId, { includeSource, includeDeleted: false });
+		return Array.isArray(response.scripts) ? response.scripts.filter(isScriptRecord) : [];
+	}
+
+	async writeProjectScript(placeId: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+		return this.rpc('project:write', placeId, payload);
+	}
+
 	private async authToken(): Promise<string> {
 		const response = await this.getJson('/auth-token');
 		const token = response.token;
@@ -229,11 +247,12 @@ class StudioLinkProjectsProvider implements vscode.TreeDataProvider<TreeNode> {
 	constructor(private readonly client: StudioLinkDaemonClient) {}
 
 	async refresh(): Promise<void> {
-		this.projects = await readProjects();
 		try {
+			this.projects = await readProjects(this.client);
 			await this.client.health();
 			this.daemonOnline = true;
 		} catch {
+			this.projects = await readProjectsFromCache();
 			this.daemonOnline = false;
 		}
 		this.onDidChangeTreeDataEmitter.fire(undefined);
@@ -261,7 +280,7 @@ class StudioLinkProjectsProvider implements vscode.TreeDataProvider<TreeNode> {
 
 	async getChildren(element?: TreeNode): Promise<TreeNode[]> {
 		if (element instanceof ProjectNode) {
-			const scripts = await readScripts(element.project);
+			const scripts = await readScripts(this.client, element.project);
 			return scripts.slice(0, 40).map(script => new InfoNode(script.path, formatScriptMeta(script), 'file-code'));
 		}
 		if (this.projects.length === 0) {
@@ -308,7 +327,19 @@ class StudioLinkInlineProvider implements vscode.InlineCompletionItemProvider {
 	}
 }
 
-async function readProjects(): Promise<ProjectSummary[]> {
+async function readProjects(client: StudioLinkDaemonClient): Promise<ProjectSummary[]> {
+	try {
+		const projects = await client.listProjects();
+		if (projects.length > 0) {
+			return projects;
+		}
+	} catch {
+		// Fallback below keeps the tree useful when only the cache is available.
+	}
+	return readProjectsFromCache();
+}
+
+async function readProjectsFromCache(): Promise<ProjectSummary[]> {
 	const base = configuredDataDir();
 	const placesDir = path.join(base, 'places');
 	const reposDir = path.join(base, 'repos');
@@ -333,7 +364,15 @@ async function readProjects(): Promise<ProjectSummary[]> {
 	return projects.sort((left, right) => (right.updatedAt || '').localeCompare(left.updatedAt || '') || left.placeId.localeCompare(right.placeId));
 }
 
-async function readScripts(project: ProjectSummary): Promise<ScriptRecord[]> {
+async function readScripts(client: StudioLinkDaemonClient, project: ProjectSummary): Promise<ScriptRecord[]> {
+	try {
+		return await client.listProjectScripts(project.placeId, true);
+	} catch {
+		return readScriptsFromCache(project);
+	}
+}
+
+async function readScriptsFromCache(project: ProjectSummary): Promise<ScriptRecord[]> {
 	return readScriptsFromRegistry(path.join(project.placeDir, 'scripts.json'));
 }
 
@@ -351,12 +390,19 @@ async function readPlaceName(placeDir: string): Promise<string | undefined> {
 	if (!text) {
 		return undefined;
 	}
-	const parsed = JSON.parse(text) as { placeName?: unknown };
+	const parsed = JSON.parse(text) as { placeName?: unknown; metadata?: { placeName?: unknown } };
+	if (typeof parsed.metadata?.placeName === 'string') {
+		return parsed.metadata.placeName;
+	}
 	return typeof parsed.placeName === 'string' ? parsed.placeName : undefined;
 }
 
 function isScriptRecord(value: unknown): value is ScriptRecord {
 	return typeof value === 'object' && value !== null && typeof (value as { path?: unknown }).path === 'string';
+}
+
+function isProjectSummary(value: unknown): value is ProjectSummary {
+	return typeof value === 'object' && value !== null && typeof (value as { placeId?: unknown }).placeId === 'string';
 }
 
 function newestTimestamp(scripts: ScriptRecord[]): string | undefined {
